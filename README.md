@@ -1,6 +1,6 @@
 
 
-# AI Assistant Local-MCP-Ollama-Setup
+# Shreyash AI Assistant Local-MCP-Ollama-Setup
 
 This guide explains how to set up a local AI Assistant using:
 
