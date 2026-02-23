@@ -9,6 +9,11 @@ chat_agent = ChatAgent()
 async def chat(
     query: str = Form(...)
 ):
+    """
+    Handles chat requests from clients.
+    Validates the query input and processes it through the ChatAgent.
+    Returns the AI-generated answer.
+    """
     if not query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
 
