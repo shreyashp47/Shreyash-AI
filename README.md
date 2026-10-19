@@ -1,197 +1,84 @@
+# Shreyash-AI: a local AI agent with MCP tool calling
 
+A small, fully local AI assistant. You ask a question over HTTP; a FastAPI agent shows a local
+LLM (Ollama, `qwen2.5:7b-instruct`) the tools exposed by an MCP server, runs the tool the model
+picks, then asks the model again so the final answer is grounded in the tool result.
 
-# Shreyash AI Assistant Local-MCP-Ollama-Setup
+No cloud LLM and no API keys: the model runs on your machine through Ollama, and the
+assistant reaches its tools through the Model Context Protocol (MCP) over SSE.
 
-This guide explains how to set up a local AI Assistant using:
+## How it works
 
-* Ollama
-* Visual Studio Code
-* Postman
-* Python backend (MCP Server)
+```
+client ── POST /chat ──▶ AI-Assistant (FastAPI, :9001)
+                           1. list the MCP server's tools          ──▶ mcp-ai-server (FastMCP, :8000/sse)
+                           2. call qwen2.5 with the tool schemas          └─ get_crypto_price → CoinGecko API
+                           3. if the model requests a tool, run it  ──▶
+                           4. call the model again with the result
+client ◀── {"answer": ...} ┘
+```
 
-Everything runs on a local machine.
+| File | Role |
+|---|---|
+| `AI-Assistant/main.py` | FastAPI app with the `POST /chat` endpoint |
+| `AI-Assistant/agent.py` | The tool-calling loop: list tools → LLM → run tool → LLM |
+| `AI-Assistant/llm_ollama.py` | `ChatOllama` client (LangChain), temperature 0, tools bound per call |
+| `AI-Assistant/mcp_client.py` | Lists and calls MCP tools over SSE |
+| `AI-Assistant/prompt.py` | Prompt that makes the model answer from the tool result when there is one |
+| `mcp-ai-server/main.py` | FastMCP server exposing `get_crypto_price` (CoinGecko) |
 
----
+## Run it
 
-## 1. Install Ollama
+**1. Ollama and the model**
 
-Download and install: [https://ollama.com](https://ollama.com)
+Install [Ollama](https://ollama.com), then:
 
 ```bash
-ollama --version  # Verify installation
+ollama pull qwen2.5:7b-instruct
+ollama run qwen2.5:7b-instruct   # replies in the terminal = setup works
 ```
 
----
-
-## 2. Download a Model
-
-Example model: [https://ollama.com/library/qwen2.5:7b-instruct](https://ollama.com/library/qwen2.5:7b-instruct)
+**2. MCP server** (terminal 1)
 
 ```bash
-ollama pull qwen2.5:7b-instruct  # Pull the model
+cd mcp-ai-server
+python3.13 -m venv .venv && source .venv/bin/activate
+pip install -r req.txt uv
+uv run main.py                   # serves MCP over SSE at http://127.0.0.1:8000/sse
 ```
+
+**3. AI assistant** (terminal 2)
 
 ```bash
-ollama run qwen2.5:7b-instruct  # Run the model
-```
-
-If it responds in terminal, setup is correct.
-
----
-
-## 3. Model Location (Mac)
-
-```
-/Users/shreyash/.ollama/models   # Default model path on my mac | check model location in Ollama settings.
-```
-
----
-
-## 4. Test Ollama via API
-
-Test using Postman: [Ollama DOC](https://docs.ollama.com/api/chat)
-
-POST
-
-```
-http://localhost:11434/api/chat
-```
-
-Body → JSON:
-
-```json
-{
-  "model": "qwen2.5:7b-instruct",
-  "messages": [
-      {"role": "system","content": "You are helpfull AI assistant"},
-      {"role": "user","content": "Explain the reflection"}
-  ],
-  "stream": false
-}
-```
-
----
-
-## 5. Create Two Projects
-
-Create two empty projects:
-
-* mcp-server
-* Ai-Assistant
-
-Open both in separate Visual Studio Code windows.
-
----
-
-## 6. Create Virtual Environment (Python 3.13)
-
-Inside each project:
-
-```bash
-python3.13 -m venv .venv
-```
-
-Activate virtual environment (Mac/Linux):
-
-```bash
-source .venv/bin/activate
-```
-
----
-Add the following section after the virtual environment step in your `README.md`.
-
----
-
-## 7. Install Required Dependencies
-
-Create a `requirements.txt` file inside both projects 
-
-Add the required dependencies in `requirements.txt`
-
-```bash
-pip install -r requirements.txt   # Install dependencies:
-```
-
-Verify installation:
-
-```bash
-pip list  #Now your environment is ready to build the MCP server and backend API.
-```
----
-
-## 8. Create `main.py` in  AI Assistant project and Run Server
-
-Create a `main.py` file inside your project.
-
-Run the server:
-
-```bash
+cd AI-Assistant
+python3.13 -m venv .venv && source .venv/bin/activate
+pip install -r requirement.txt
 UVICORN_HOST=127.0.0.1 UVICORN_PORT=9001 uvicorn main:app --reload
 ```
---- 
-## 9. Setup MCP Server
 
-Create a new empty project for the MCP server and open it in Visual Studio Code.
+**4. Ask a question**
 
-Create a virtual environment (if not already created):
+`/chat` reads a form field named `query`:
 
 ```bash
-python3.13 -m venv .venv
-source .venv/bin/activate
+curl -X POST http://127.0.0.1:9001/chat -F "query=What is the current bitcoin price?"
 ```
 
-Create a `requirements.txt` file and add the dependencies mentioned in Step 7.
+The model sees `get_crypto_price`, calls it with `coin=bitcoin`, and answers with the live price.
+For a question no tool covers, it answers from its own knowledge.
 
-Install dependencies:
+## Adding a tool
 
-```bash
-pip install -r requirements.txt
-```
+Add a function with `@mcp.tool(name=..., description=...)` in `mcp-ai-server/main.py` and restart
+the server. The assistant lists tools on every request, so the model sees the new tool without any
+change to `AI-Assistant`.
 
-Copy the `main.py` file into this MCP project.  
-(Implementation details will be added in the repository.)
+## Tips
+
+- Test Ollama on its own with Postman or curl: `POST http://localhost:11434/api/chat`
+  ([API docs](https://docs.ollama.com/api/chat)).
+- Ollama stores models in `~/.ollama/models` by default; the Ollama settings show the location.
 
 ---
 
-### Install `uv`
-
-Install `uv` using terminal:
-
-```bash
-pip install uv
-```
-
-Verify installation:
-
-```bash
-uv --version
-```
-
----
-
-### Run MCP Server
-
-```bash
-uv run main.py
-```
----
-Add the following correction under your AI Assistant server section.
-
----
-
-### Test AI Assistant API (Postman)
-
-```
-http://127.0.0.1:9001/chat
-```
-Body → JSON:
-
-```json
-{
-  "query": "What is the current bitcoin price"
-}
-```
- 
----
-
-This repository is for learning and personal experimentation with local AI systems and MCP architecture.
+Built for learning and experimenting with local LLMs, agents and MCP.
